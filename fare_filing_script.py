@@ -2,7 +2,7 @@ import os
 import sys
 import pandas as pd
 from openpyxl import Workbook
-from openpyxl.styles import PatternFill
+from openpyxl.styles import PatternFill,Font
 from openpyxl import load_workbook
 from datetime import datetime
 import math
@@ -37,7 +37,7 @@ CODE_MAP = {
 
 #Round to the nearest integer
 def round_nearest(num):
-        return math.floor(num+0.5)
+        return math.floor(num+1)
 
 class FareFilingProcessor:
     def __init__(self, input_path, data_path):
@@ -63,15 +63,22 @@ class FareFilingProcessor:
         # Prepare output workbook
         self.out_wb = Workbook()
         self.del_ws = self.out_wb.active
+
         self.del_ws.title = 'DELETE'
         self.del_ws.append(["Tariff","CXR","NAT1","NAT2","LOC1","LOC2","Rule",
                              "FareClass","OW/RT","RTG","FN","CUR","Amount",
                              "Eff.Date","Disc.Date","GFSFAN"])
+        
         self.file_ws = self.out_wb.create_sheet('FILE')
         self.file_ws.append(['ACTION','Origin','Dest.','RBD','Channel','OW/RT',
                               'Baggage','Product type','Base Fare','Currency',
                               'SALES','TRAVEL','NOTES','FN','Filing Date',
                               'Total Fare','FBC','DUPE CHECK'])
+        
+        self.gh_ws = self.out_wb.create_sheet('GH FARE AMENDMENT')
+        self.gh_ws.append(["ACTION","Tariff","CXR","NAT1","NAT2","LOC1","LOC2","Rule",
+                             "FareClass","OW/RT","RTG","FN","CUR","New Amount",
+                             "Eff.Date","Disc.Date","GFSFAN"])
 
     def read_input(self, input_path):
         df_raw = pd.read_excel(input_path, header=None)
@@ -117,21 +124,21 @@ class FareFilingProcessor:
 
     def baggage_structure(self, origin, dest, rbd, brand, trip):
         df = self.df_atpco[
-            (self.df_atpco['LOC1'] == self.translate_loc(origin)) &
-            (self.df_atpco['LOC2'] == self.translate_loc(dest)) &
-            (self.df_atpco['RBD'] == rbd) &
-            (self.df_atpco['BRAND'] == brand) &
+            (self.df_atpco['LOC1'].str.strip() == self.translate_loc(origin)) &
+            (self.df_atpco['LOC2'].str.strip() == self.translate_loc(dest)) &
+            (self.df_atpco['RBD'].str.strip() == rbd) &
+            (self.df_atpco['BRAND'].str.strip() == brand) &
             (self.df_atpco['OW/RT'] == trip)
         ]
         return (df['BAG'].values[0]) if not df.empty else 0
     
     def baggage_non_structure(self, origin, dest, rbd, brand, fn, trip):
         df = self.df_atpco[
-            (self.df_atpco['LOC1'] == self.translate_loc(origin)) &
-            (self.df_atpco['LOC2'] == self.translate_loc(dest)) &
-            (self.df_atpco['RBD'] == rbd) &
-            (self.df_atpco['BRAND'] == brand) &
-            (self.df_atpco['FN'] == fn) &
+            (self.df_atpco['LOC1'].str.strip() == self.translate_loc(origin)) &
+            (self.df_atpco['LOC2'].str.strip() == self.translate_loc(dest)) &
+            (self.df_atpco['RBD'].str.strip() == rbd) &
+            (self.df_atpco['BRAND'].str.strip() == brand) &
+            (self.df_atpco['FN'].str.strip() == fn) &
             (self.df_atpco['OW/RT'] == trip)
         ]
         return (df['BAG'].values[0]) if not df.empty else 0
@@ -143,7 +150,7 @@ class FareFilingProcessor:
                 (50,389,'L'),(390,454,'Q'),(455,532,'H'),(533,623,'K'),
                 (624,714,'U'),(715,831,'B'),(832,987,'R'),(988,1182,'N'),
                 (1183,1377,'M'),(1378,1637,'T'),(1638,1962,'W'),(1963,2352,'O'),
-                (2353,2807,'E'),(2808,3262,'I'),(3263,3782,'A'),(3783,9999,'Y') 
+                (2353,2807,'E'),(2808,3262,'I'),(3263,3782,'A'),(3783,999999999999999,'Y') 
             ]
         
         elif trip == 2:
@@ -151,7 +158,7 @@ class FareFilingProcessor:
                 (100,599,'L'),(600,699,'Q'),(700,819,'H'),(820,959,'K'),
                 (960,1099,'U'),(1100,1279,'B'),(1280,1519,'R'),(1520,1819,'N'),
                 (1820,2119,'M'),(2120,2519,'T'),(2520,3019,'W'),(3020,3619,'O'),
-                (3620,4319,'E'),(4320,5019,'I'),(5020,5819,'A'),(5820,9999,'Y')
+                (3620,4319,'E'),(4320,5019,'I'),(5020,5819,'A'),(5820,999999999999999,'Y')
             ]
     
         for low, high, rbd in thresholds:
@@ -165,20 +172,22 @@ class FareFilingProcessor:
             return "L"
         elif(bag==40):
             return "X"
+        elif(bag>40):
+            return "NF"
 
     def fbc_calc(self, origin, destination, trip, brand, channel, sales, fn, rbd, bag_code):
         trip_code = 'O' if trip == 1 else 'R'
         sales_u = str(sales).strip().upper()
         # Brand code
         if sales_u == 'STRUCTURE':
-            if brand == 'BRAND 1': code = '6'
-            elif brand in ('BRAND 2', 'GDS 1'): code = '7'
-            elif brand == 'BRAND 3': code = '7'
+            if brand == 'Brand 1': code = '6'
+            elif brand in ('Brand 2', 'GDS 1'): code = '7'
+            elif brand == 'Brand 3': code = '7'
             elif brand == 'GDS 2': code = '3'
         else:
-            if brand == 'BRAND 1': code = '6'
-            elif brand == 'BRAND 2': code = '7'
-            elif brand == 'BRAND 3': code = '8'
+            if brand == 'Brand 1': code = '6'
+            elif brand == 'Brand 2': code = '7'
+            elif brand == 'Brand 3': code = '8'
             elif brand == 'GDS 1': code = 'P7'
             elif brand == 'GDS 2': code = 'P3'
         # Origin country
@@ -191,20 +200,33 @@ class FareFilingProcessor:
     def write_file(self, action, origin, dest, rbd, channel, trip,
                    baggage, brand, base_fare, currency,
                    total_fare, fbc, notes=''):
+
+        self.base_fare = base_fare
+        self.total_fare = total_fare
+
+        if(base_fare != int(base_fare)):
+            self.base_fare = round_nearest(base_fare)
+        
+        if(total_fare != int(total_fare)):
+            self.total_fare = round_nearest(total_fare)
+        
+        if(self.action == "AMEND"):
+            self.base_fare,self.total_fare = self.amend_same_fare(brand, self.base_fare, self.total_fare)
+
         row = [action, origin, dest, rbd, channel, trip,
-               baggage, brand, round_nearest(base_fare), currency,
+               baggage, brand, self.base_fare, currency,
                self.sales, self.travel, notes, self.fn,
                datetime.now().strftime('%d-%m-%y'),
-               round_nearest(total_fare), fbc, '']
+               self.total_fare, fbc, '']
         self.file_ws.append(row)
 
     def write_del(self, origin, dest, rbd, brand, trip):
         df = self.df_atpco[
-            (self.df_atpco['LOC1'] == self.translate_loc(origin)) &
-            (self.df_atpco['LOC2'] == self.translate_loc(dest)) &
-            (self.df_atpco['RBD'] == rbd) &
-            (self.df_atpco['BRAND'] == brand) &
-            (self.df_atpco['FN'] == self.fn) &
+            (self.df_atpco['LOC1'].str.strip() == self.translate_loc(origin)) &
+            (self.df_atpco['LOC2'].str.strip() == self.translate_loc(dest)) &
+            (self.df_atpco['RBD'].str.strip() == rbd) &
+            (self.df_atpco['BRAND'].str.strip() == brand) &
+            (self.df_atpco['FN'].str.strip() == self.fn) &
             (self.df_atpco['OW/RT'] == trip)
         ]
         if not df.empty:
@@ -215,8 +237,33 @@ class FareFilingProcessor:
                    row['Eff.Date'].strftime("%d/%m/%y"), row['Disc.Date'], row['GFSFAN']]
             self.del_ws.append(out)
 
+    def amend_same_fare(self, brand, base_fare, total_fare):
+        df = self.df_atpco[
+            (self.df_atpco['LOC1'] == self.translate_loc(self.origin)) &
+            (self.df_atpco['LOC2'] == self.translate_loc(self.dest)) &
+            (self.df_atpco['RBD'] == self.fare_class_map[self.filed_level]) &
+            (self.df_atpco['BRAND'] == brand) &
+            (self.df_atpco['FN'] == self.fn) &
+            (self.df_atpco['OW/RT'] == self.trip)
+        ]
+        
+        # print(base_fare, total_fare, "Before the condition") 
+        if(not df['BASE FARE'].empty and (df['BASE FARE'].item() - base_fare)==0):
+            
+            base_fare+=1; total_fare+=1
+            
+            # print(base_fare, total_fare, "After the condition in BF", df['BASE FARE'].item())
+
+        elif(not df['TOTAL FARE'].empty and (df['BASE FARE'].item() - base_fare)==0):
+            
+            base_fare+=1
+            total_fare+=1
+            # print(base_fare, total_fare,"After the condition in TF", df['BASE FARE'].item())
+
+        return base_fare, total_fare
+
     def brand1_calc(self):
-        brand = 'BRAND 1'; channel = 'WEB'
+        brand = 'Brand 1'; channel = 'WEB'
         self.filed_rbd = self.fare_class_map[self.filed_level]
         if(self.trip == 1):
             if(self.filed_rbd == "L"):
@@ -284,9 +331,12 @@ class FareFilingProcessor:
                 self.b1_base_fare_with_yq_aed = 5020  
             elif(self.filed_rbd == "Y"):
                 self.b1_base_fare_with_yq_aed = 5820
+
+        self.b1_base_fare = (self.b1_base_fare_with_yq_aed/self.exch) - self.yq_tax
         
-        self.b1_base_fare = round_nearest((self.b1_base_fare_with_yq_aed/self.exch) - self.yq_tax)
-        self.b1_total_fare = round_nearest(self.b1_base_fare + self.tax + self.yq_tax)
+        self.b1_total_fare = self.b1_base_fare + self.tax + self.yq_tax
+
+        
         fbc = self.fbc_calc(self.origin, self.dest, self.trip, brand, channel, self.sales, self.fn, self.filed_rbd, "")
         self.write_file(self.action, self.origin, self.dest, self.fare_class_map[self.filed_level],
                         channel, self.trip, self.b1_baggage,
@@ -294,7 +344,7 @@ class FareFilingProcessor:
                         self.b1_total_fare, fbc)
 
     def brand2_calc(self):
-        brand = 'BRAND 2'; channel = 'WEB';
+        brand = 'Brand 2'; channel = 'WEB';
         diff = 0
         b1_total_fare_aed = self.b1_total_fare * self.exch
         if b1_total_fare_aed <= 500:
@@ -309,8 +359,10 @@ class FareFilingProcessor:
             diff = 80 if self.trip == 1 else 160
         
         diff = diff/self.exch
-        self.b2_total_fare = round_nearest(self.b1_total_fare + diff)
-        self.b2_base_fare = round_nearest(self.b2_total_fare - self.tax - self.yq_tax)
+        self.b2_total_fare = self.b1_total_fare + diff
+
+        self.b2_base_fare = self.b2_total_fare - self.tax - self.yq_tax
+       
         bag_code = self.get_baggage_code(self.b2_baggage)
         fbc = self.fbc_calc(self.origin, self.dest, self.trip, brand, channel, self.sales, self.fn, self.filed_rbd,bag_code)
         self.write_file(self.action, self.origin, self.dest, self.fare_class_map[self.filed_level],
@@ -334,32 +386,32 @@ class FareFilingProcessor:
         else:
             seg_fee = 80 if self.trip == 1 else 160
 
-        self.segment_fee = seg_fee/self.exch
+        
+        self.segment_fee = seg_fee/self.exch      
         if(self.filed_level<=5):
-            # print("Step 1")
             origin_count = 0 
             dest_count = 0
             for origin in self.df_fod['Origin']:
-                if(self.origin == origin):
-                    origin_count+=1
-            
+                if(type(origin)==str):
+                    if(self.origin == origin.strip()):
+                        origin_count+=1
+
             for dest in self.df_fod['Destination']:
-                if(self.dest == dest):
-                    dest_count+=1
-            # print(self.df_fod['Destination'][27])
-            # print(self.dest)
-            # print(origin_count, "Origin")
-            # print(dest_count,"Dest")
+                if(type(dest) == str):
+                    if(self.dest == dest.strip()):
+                        dest_count+=1
+
             if(origin_count>0 and dest_count>0):
-                self.gds1_base_fare = round_nearest(self.b2_base_fare + self.segment_fee - self.tfee)
+                self.gds1_base_fare = self.b2_base_fare + self.segment_fee - self.tfee
             else:
-                self.gds1_base_fare = round_nearest(self.b2_base_fare + self.segment_fee)
+                self.gds1_base_fare = self.b2_base_fare + self.segment_fee
 
         else:
-            self.gds1_base_fare = round_nearest(self.b2_base_fare + self.segment_fee)
+            self.gds1_base_fare = self.b2_base_fare + self.segment_fee
+            
+        self.gds1_total_fare = self.gds1_base_fare + self.tax + self.yq_tax + self.tfee
 
-        self.gds1_total_fare = round_nearest(self.gds1_base_fare + self.tax + self.yq_tax + self.tfee)
-        bag_code = self.get_baggage_code(self.b2_baggage)
+        bag_code = self.get_baggage_code(self.gds1_baggage)
         fbc = self.fbc_calc(self.origin, self.dest, self.trip, brand, channel, self.sales, self.fn, self.filed_rbd,bag_code)
         self.write_file(self.action, self.origin, self.dest, self.fare_class_map[self.filed_level],
                         channel, self.trip, self.gds1_baggage,
@@ -367,13 +419,15 @@ class FareFilingProcessor:
                         self.gds1_total_fare, fbc)
 
     def brand3_calc(self):
-        brand = 'BRAND 3'; channel = 'WEB';
+        brand = 'Brand 3'; channel = 'WEB';
         if self.trip == 1:
-            self.b3_total_fare = round_nearest(self.gds1_total_fare + 100/self.exch)
+            self.b3_total_fare = self.gds1_total_fare + 100/self.exch
         else:
-            self.b3_total_fare = round_nearest(self.gds1_total_fare + 200/self.exch)
-        self.b3_base_fare = round_nearest(self.b3_total_fare - self.yq_tax - self.tax)
-        bag_code = self.get_baggage_code(self.b2_baggage)
+            self.b3_total_fare = self.gds1_total_fare + 200/self.exch
+
+        self.b3_base_fare = self.b3_total_fare - self.yq_tax - self.tax
+
+        bag_code = self.get_baggage_code(self.b3_baggage)
         fbc = self.fbc_calc(self.origin, self.dest, self.trip, brand, channel, self.sales, self.fn, self.filed_rbd,bag_code)
         self.write_file(self.action, self.origin, self.dest, self.fare_class_map[self.filed_level],
                         channel, self.trip, self.b3_baggage,
@@ -384,15 +438,72 @@ class FareFilingProcessor:
         brand = 'GDS 2'; channel = 'GDS';
         level = self.inv_fare_map[self.filed_rbd]
         flex = 0.05 if 1 <= level <= 13 else 0.1
-        self.gds2_base_fare = round_nearest(self.b3_base_fare + (flex * (self.b3_base_fare + self.yq_tax)) + self.segment_fee)
-        self.gds2_total_fare = round_nearest(self.gds2_base_fare + self.yq_tax + self.tax + self.tfee)
-        bag_code = self.get_baggage_code(self.b2_baggage)
+        self.gds2_base_fare = self.b3_base_fare + (flex * (self.b3_base_fare + self.yq_tax)) + self.segment_fee
+
+        self.gds2_total_fare = self.gds2_base_fare + self.yq_tax + self.tax + self.tfee
+
+        bag_code = self.get_baggage_code(self.gds2_baggage)
         fbc = self.fbc_calc(self.origin, self.dest, self.trip, brand, channel, self.sales, self.fn, self.filed_rbd,bag_code)
         self.write_file(self.action, self.origin, self.dest, self.fare_class_map[self.filed_level],
                         channel, self.trip, self.gds2_baggage,
                         brand, self.gds2_base_fare, self.currency,
                         self.gds2_total_fare, fbc)
 
+    def write_gh(self, df):
+        row = df.iloc[0]
+        # self.gh_ws.cell(row, 14).font = Font(color = "FF0000")
+        if(self.new_base_fare != int(self.new_base_fare)):
+            self.new_base_fare = round_nearest(self.new_base_fare)
+        out = [self.action, row['Tariff'], row['CXR'], row['NAT1'], row['NAT2'],
+                row['LOC1'], row['LOC2'], row['Rule'], row['FareClass'],
+                row['OW/RT'], row['RTG'], row['FN'], row['CUR'], self.new_base_fare,
+                row['Eff.Date'].strftime("%d/%m/%y"), row['Disc.Date'], row['GFSFAN']]
+        self.gh_ws.append(out)
+
+    def gh_lookup(self,brand):    
+        df = self.df_atpco[
+            (self.df_atpco['LOC1'] == self.translate_loc(self.origin)) &
+            (self.df_atpco['LOC2'] == self.translate_loc(self.dest)) &
+            (self.df_atpco['RBD'] == "GH") &
+            (self.df_atpco['BRAND'] == brand) &
+            (self.df_atpco['FN'] == self.fn) &
+            (self.df_atpco['OW/RT'] == self.trip)
+        ]
+       
+        return df
+
+    def gh_calc(self):
+        self.action = "Amend Fare"
+        self.channel = "TA"
+        if(self.trip == 1):
+            if(self.currency == "QAR" or self.currency == "SAR"):
+                gh_increment = 20
+            else:
+                gh_increment = 2
+        else:
+            if(self.currency == "QAR" or self.currency == "SAR"):
+                gh_increment = 40
+            else:
+                gh_increment = 4
+
+        brand = "Brand 1"
+        df = self.gh_lookup(brand)  
+        if(not df.empty):
+            self.new_base_fare = self.b1_base_fare + gh_increment
+            self.write_gh(df)
+
+        brand = "Brand 2"
+        df = self.gh_lookup(brand)  
+        if(not df.empty):
+            self.new_base_fare = self.b2_base_fare + gh_increment
+            self.write_gh(df)
+
+        brand = "Brand 3"
+        df = self.gh_lookup(brand)  
+        if(not df.empty):
+            self.new_base_fare = self.b3_base_fare + gh_increment
+            self.write_gh(df)
+            
     def amend(self):
         self.action = 'AMEND'
         self.filed_rbd = self.fare_class_map[self.filed_level]
@@ -407,25 +518,38 @@ class FareFilingProcessor:
             (self.df_atpco['FN'] == self.fn) &
             (self.df_atpco['OW/RT'] == self.trip)
         ]
-        if not df.empty and ((df.iloc[0]['BASE FARE']) - int(self.b1_base_fare)) == 0:
+        if not df.empty and ((df.iloc[0]['BASE FARE']) - self.b1_base_fare) == 0:
+               
                 existing_content = self.df_table.at[self.idx, 'COMPLETED']
                 new_content = str(existing_content) + '//Not amended as same fare'
                 self.df_table.at[self.idx, 'COMPLETED'] = new_content.strip()
                 return
         if df.empty:
             return
+        
         self.channel = "WEB"
-        self.b1_base_fare = round_nearest(self.b1_base_fare)
-        fbc = self.fbc_calc(self.origin, self.dest, self.trip, "BRAND 1", self.channel, self.sales, self.fn, self.filed_rbd,"")
+        
+        fbc = self.fbc_calc(self.origin, self.dest, self.trip, "Brand 1", self.channel, self.sales, self.fn, self.filed_rbd,"")
         self.write_file(self.action, self.origin, self.dest, self.fare_class_map[self.filed_level],
                         self.channel, self.trip, self.b1_baggage,
-                        "BRAND 1", self.b1_base_fare, self.currency,
+                        "Brand 1", self.b1_base_fare, self.currency,
                         self.b1_total_fare, fbc)
+        self.b1_base_fare = self.base_fare
+        self.b1_total_fare = self.total_fare
         self.brand2_calc()
+        self.b2_base_fare = self.base_fare
+        self.b2_total_fare = self.total_fare
         self.gds1_calc()
+        self.gds1_base_fare = self.base_fare
+        self.gds1_total_fare = self.total_fare
         self.brand3_calc()
+        self.b3_base_fare = self.base_fare
+        self.b3_total_fare = self.total_fare
         self.gds2_calc()
+        self.gds2_base_fare = self.base_fare
+        self.gds2_total_fare = self.total_fare
         self.df_table.at[self.idx, 'COMPLETED'] = 'YES'
+        self.gh_calc()              
 
     def build(self):
         self.action = 'NEW'
@@ -471,32 +595,36 @@ class FareFilingProcessor:
             if pd.isna(self.dest) or pd.isna(self.trip) or pd.isna(self.filed_rbd) or pd.isna(self.currency) or pd.isna(self.b1_total_fare):
                 self.df_table.at[self.idx, 'COMPLETED'] = 'Missing input data'
                 continue
-            else:
-                self.b1_total_fare = round_nearest(self.b1_total_fare)
-                final_total_fare = self.b1_total_fare
-            
+        
+            if(type(self.b1_total_fare)!=int and type(self.b1_total_fare)!= float):
+                self.df_table.at[self.idx, 'COMPLETED'] = 'Incorrect B1 fare in input sheet'
+                continue
+
+            final_total_fare = self.b1_total_fare
+
             #Check if origin and destination is in the restricted list
 
             res_origin_count = 0 
             res_dest_count = 0
 
             for res_origin in self.df_restricted_od['Origin']:
-                if(self.origin == res_origin):
+                if(self.origin == res_origin.strip()):
                     res_origin_count+=1
             
             for res_dest in self.df_restricted_od['Destination']:
-                if(self.dest == res_dest):
+                if(self.dest == res_dest.strip()):
                     res_dest_count+=1
 
             if(res_origin_count>0 and res_dest_count>0):
-                self.df_table.at[self.idx, 'COMPLETED'] = 'Manual action required'
+                self.df_table.at[self.idx, 'COMPLETED'] = 'Restricted OD'
                 continue            
             
             #Check if correct origin is in the input sheet
             origin_count = 0
             for origin_cell_value in self.df_fod["Origin"]:
-                if(self.origin == origin_cell_value or self.origin == "SLL"):
-                    origin_count+=1
+                if(type(origin_cell_value) == str):
+                    if(self.origin == origin_cell_value.strip() or self.origin == "SLL"):
+                        origin_count+=1
             
             if(origin_count<=0):
                 self.df_table.at[self.idx, 'COMPLETED'] = 'Incorrect origin in input sheet'
@@ -505,8 +633,9 @@ class FareFilingProcessor:
             #Check if correct destination is in the input sheet
             dest_count = 0
             for dest_cell_value in self.df_fod["All Destination"]:
-                if(self.dest == dest_cell_value):
-                    dest_count+=1
+                if(type(dest_cell_value) == str):
+                    if(self.dest == dest_cell_value.strip()):
+                        dest_count+=1
             
             if(dest_count<=0):
                 self.df_table.at[self.idx, 'COMPLETED'] = 'Incorrect destination in input sheet'
@@ -517,8 +646,12 @@ class FareFilingProcessor:
                 self.df_table.at[self.idx, 'COMPLETED'] = 'Incorrect trip type in input sheet'
                 continue
             
-            if(len(self.filed_rbd)!=1):
-                self.df_table.at[self.idx, 'COMPLETED'] = 'Incorrect RBD input sheet'
+            if(type(self.filed_rbd) == str):
+                if(len(self.filed_rbd)!=1):
+                    self.df_table.at[self.idx, 'COMPLETED'] = 'Incorrect RBD in input sheet'
+                    continue
+            else:
+                self.df_table.at[self.idx, 'COMPLETED'] = 'Incorrect RBD in input sheet'  
                 continue
 
             #Check if incorrect currency is in the input sheet
@@ -552,9 +685,9 @@ class FareFilingProcessor:
             elif (self.trip == 2):
                 self.trip_tax = "RT"
 
-            tax_data = self.df_tax[(self.df_tax['Origin']==self.origin) &
-                               (self.df_tax['Destination']==self.dest) &
-                               (self.df_tax['JourneyType']==self.trip_tax)].iloc[0]
+            tax_data = self.df_tax[(self.df_tax['Origin'].str.strip()==self.origin) &
+                               (self.df_tax['Destination'].str.strip()==self.dest) &
+                               (self.df_tax['JourneyType'].str.strip()==self.trip_tax)].iloc[0]
             self.tax = tax_data['FixedTaxTotal']
             self.yq_tax = tax_data['YQ']
             self.tfee = tax_data['YR']
@@ -587,7 +720,7 @@ class FareFilingProcessor:
             #Calculate tfee discount
             od = self.origin + self.dest
             if(self.filed_level <=5):
-                filtered_tfee_row = self.df_tfee_discount[(self.df_tfee_discount['Ods']==od)]
+                filtered_tfee_row = self.df_tfee_discount[(self.df_tfee_discount['Ods'].str.strip()==od)]
                 if not filtered_tfee_row.empty:
                     tfee_row = filtered_tfee_row.iloc[0]
                     if(self.trip == 1):
@@ -599,13 +732,11 @@ class FareFilingProcessor:
                 if pd.isna(self.tfee):
                     self.df_table.at[self.idx, 'COMPLETED'] = 'Missing TFEE data in Fare Calc OD sheet'
                     continue
-                else:
-                    self.tfee = round_nearest(float(self.tfee))
 
             if(self.filed_level > 9):
                 self.filed_level = 9
 
-            self.brand = "BRAND 1"
+            self.brand = "Brand 1"
             
             if (self.filed_level == self.new_level):
                 self.amend()
@@ -615,13 +746,13 @@ class FareFilingProcessor:
                     if(self.filed_level - self.new_level == 0):
                         self.channel = "WEB"
                         self.action = "NEW"
-                        self.b1_base_fare = round_nearest(self.b1_base_fare)
                         self.b1_total_fare = final_total_fare
+                        self.b1_base_fare = final_base_fare
                         self.filed_rbd = self.fare_class_map[self.filed_level]
-                        fbc = self.fbc_calc(self.origin, self.dest, self.trip, "BRAND 1", self.channel, self.sales, self.fn, self.filed_rbd,"")
+                        fbc = self.fbc_calc(self.origin, self.dest, self.trip, "Brand 1", self.channel, self.sales, self.fn, self.filed_rbd,"")
                         self.write_file(self.action, self.origin, self.dest, self.fare_class_map[self.filed_level],
                         self.channel, self.trip, self.b1_baggage,
-                        "BRAND 1", self.b1_base_fare, self.currency,
+                        "Brand 1", self.b1_base_fare, self.currency,
                         self.b1_total_fare, fbc)
                         self.brand2_calc()
                         self.gds1_calc()
@@ -629,6 +760,8 @@ class FareFilingProcessor:
                         self.gds2_calc()
                     else:
                         self.build()
+                
+                self.gh_calc()
                 existing_content = self.df_table.at[self.idx, 'COMPLETED']
                 new_content = str(existing_content) + ' YES'
                 self.df_table.at[self.idx, 'COMPLETED'] = new_content.strip()
@@ -636,17 +769,23 @@ class FareFilingProcessor:
                 while (self.filed_level <= self.new_level):
                     if (self.filed_level == self.new_level):
                         df = self.df_atpco[
-                            (self.df_atpco['LOC1'] == self.translate_loc(self.origin)) &
-                            (self.df_atpco['LOC2'] == self.translate_loc(self.dest)) &
-                            (self.df_atpco['RBD'] == self.fare_class_map[self.filed_level]) &
-                            (self.df_atpco['BRAND'] == 'Brand 1') &
-                            (self.df_atpco['FN'] == self.fn) &
+                            (self.df_atpco['LOC1'].str.strip() == self.translate_loc(self.origin)) &
+                            (self.df_atpco['LOC2'].str.strip() == self.translate_loc(self.dest)) &
+                            (self.df_atpco['RBD'].str.strip() == self.fare_class_map[self.filed_level]) &
+                            (self.df_atpco['BRAND'].str.strip() == 'Brand 1') &
+                            (self.df_atpco['FN'].str.strip() == self.fn) &
                             (self.df_atpco['OW/RT'] == self.trip)
-                        ]               
-                        if not df.empty and 0<((df.iloc[0]['BASE FARE']) - final_base_fare) < 1:
-                            final_base_fare+=1
-                            final_total_fare+=1
-                            self.b1_total_fare+=1
+                        ]              
+                        if not df.empty and -1 <= (df.iloc[0]['BASE FARE'] - final_base_fare) <= 1:
+                            if(self.currency == "SAR" or self.currency == "QAR"):
+                                final_base_fare+=10
+                                final_total_fare+=10
+                            else:
+                                final_base_fare+=1
+                                final_total_fare+=1
+
+                            
+                            self.b1_total_fare = final_total_fare
                             self.b1_base_fare = final_base_fare
                             existing_content = self.df_table.at[self.idx, 'COMPLETED']
                             new_content = str(existing_content) + ' YES'
@@ -665,7 +804,6 @@ class FareFilingProcessor:
                 existing_content = self.df_table.at[self.idx, 'COMPLETED']
                 new_content = str(existing_content) + '//Structure RBD'
                 self.df_table.at[self.idx, 'COMPLETED'] = new_content.strip()
-
         path = resolve_path_input('input.xlsx')
         with pd.ExcelWriter(path,
                             engine='openpyxl',
@@ -686,5 +824,6 @@ class FareFilingProcessor:
 
 
 if __name__ == '__main__':
+    print("Filing script is running...")
     processor = FareFilingProcessor('input.xlsx', 'data.xlsx')
     processor.process()
